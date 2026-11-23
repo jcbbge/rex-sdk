@@ -4,7 +4,7 @@
       "name": "com.superlogical.onboarding",
       "title": "Onboarding",
       "description": "A walkthrough that helps set up Rex, shown by the client.",
-      "host_id": "9499c95d-491a-425b-8755-f68e4b4bfd47",
+      "host_id": "88425918-3704-46d1-a88f-f71d8d4647ea",
       "flavors": [
         {
           "name": "onboarding",
@@ -111,7 +111,7 @@
       "name": "com.superlogical.terminal",
       "title": "Terminal",
       "description": "A terminal that runs a shell or any other command-line program.",
-      "host_id": "9499c95d-491a-425b-8755-f68e4b4bfd47",
+      "host_id": "88425918-3704-46d1-a88f-f71d8d4647ea",
       "flavors": [
         {
           "name": "shell",
@@ -2211,7 +2211,7 @@
       "name": "com.superlogical.tunnel",
       "title": "Tunnel",
       "description": "Forwards connections between this machine and a client.",
-      "host_id": "9499c95d-491a-425b-8755-f68e4b4bfd47",
+      "host_id": "88425918-3704-46d1-a88f-f71d8d4647ea",
       "flavors": [
         {
           "name": "dial",

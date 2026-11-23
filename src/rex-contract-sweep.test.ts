@@ -229,6 +229,10 @@ const sweep: ReadonlyArray<SweepEntry> = [
   sweepMethod("session.focus_direction", (sdk, input) => sdk.blocks.focusDirection(input)),
   sweepMethod("session.focus_next_pane", (sdk, input) => sdk.blocks.focusNext(input)),
   sweepMethod("session.focus_previous_pane", (sdk, input) => sdk.blocks.focusPrevious(input)),
+  sweepMethod("focus_history.reverse", (sdk, input) => sdk.blocks.reverseFocus(input), {
+    request: { session_id: target.sessionId, cursor: 5 },
+    result: { reversed: true, cursor: 4, session_id: target.sessionId, block_id: target.blockId },
+  }),
   sweepMethod("session.resize_pane", (sdk, input) => sdk.blocks.resize(input)),
   sweepMethod("session.set_block_label", (sdk, input) => sdk.blocks.setLabel(input)),
   sweepMethod("session.own_block", (sdk, input) => sdk.blocks.own(input)),

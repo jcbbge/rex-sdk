@@ -108,7 +108,7 @@ export class RexHandshakeError extends Schema.TaggedError<RexHandshakeError>()(
 }
 
 /**
- * The server does not speak the API revision this SDK was generated for.
+ * The server could not negotiate an API revision the SDK can use.
  *
  * @category errors
  * @since 0.1.0
@@ -132,7 +132,7 @@ export class RexUnsupportedApiRevision extends Schema.TaggedError<RexUnsupported
   }) {
     super({
       ...options,
-      message: `The Rex server at ${options.endpoint} does not speak API revision ${options.requiredRevision}${options.serverReason === undefined ? "" : ` (${options.serverReason})`}. Install a Rex server and SDK release that share that revision.`,
+      message: `The Rex server at ${options.endpoint} did not negotiate a compatible API revision (minimum ${options.requiredRevision})${options.serverReason === undefined ? "" : ` (${options.serverReason})`}. Install a Rex server and SDK release with overlapping revision support.`,
     });
   }
 }
@@ -261,7 +261,7 @@ export class RexInvalidResponse extends Schema.TaggedError<RexInvalidResponse>()
     super({
       method,
       requestId,
-      message: `The Rex server's answer to ${method} does not match the API revision this SDK was built for. The request may have run; inspect the affected resources, and check that the server and SDK versions match.`,
+      message: `The Rex server's answer to ${method} does not match the SDK's response schema. The request may have run; inspect the affected resources, and check that the server and SDK versions match.`,
       cause,
     });
   }

@@ -777,6 +777,38 @@ export const DataConnectResult = Schema.Struct({
 /** Result of `data.connect`. */
 export type DataConnectResult = typeof DataConnectResult.Type;
 
+/** Arguments of `focus_history.reverse`: Step back through the focus changes the calling principal made. */
+export const FocusHistoryReverseInput = Schema.Struct({
+  /** Only go back to a block in this session. The client must be attached to it. */
+  sessionId: Schema.optionalKey(SessionId),
+  /** Only go back to a block in another session than this one. */
+  notSessionId: Schema.optionalKey(SessionId),
+  /** Only go back to a block in this window. */
+  windowId: Schema.optionalKey(WindowId),
+  /** Only go back to a block in another window than this one. */
+  notWindowId: Schema.optionalKey(WindowId),
+  /** The cursor from an earlier result, to keep stepping back from where that call stopped. Leave it out to start from where focus is now. */
+  cursor: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+}).pipe(Schema.encodeKeys({ sessionId: "session_id", notSessionId: "not_session_id", windowId: "window_id", notWindowId: "not_window_id" }));
+/** Arguments of `focus_history.reverse`: Step back through the focus changes the calling principal made. */
+export type FocusHistoryReverseInput = typeof FocusHistoryReverseInput.Type;
+
+/** Result of `focus_history.reverse`. */
+export const FocusHistoryReverseResult = Schema.Struct({
+  /** Whether the call moved focus. False means no place the request allows was left to go back to, and the other fields are left out. */
+  reversed: Schema.Boolean,
+  /** Pass this as cursor in the next call to keep stepping back. */
+  cursor: Schema.OptionFromOptionalKey(Schema.Int),
+  /** The session that holds the block focus moved to. It may not be the session the client is showing. */
+  sessionId: Schema.OptionFromOptionalKey(SessionId),
+  /** The window that holds the block focus moved to. It is that session's active window. */
+  windowId: Schema.OptionFromOptionalKey(WindowId),
+  /** The block focus moved to. */
+  blockId: Schema.OptionFromOptionalKey(BlockId),
+}).pipe(Schema.encodeKeys({ sessionId: "session_id", windowId: "window_id", blockId: "block_id" }));
+/** Result of `focus_history.reverse`. */
+export type FocusHistoryReverseResult = typeof FocusHistoryReverseResult.Type;
+
 /** Arguments of `help.all`: Describe every method the server provides, including block methods. */
 export const HelpAllInput = Schema.Struct({});
 /** Arguments of `help.all`: Describe every method the server provides, including block methods. */
@@ -1471,7 +1503,7 @@ export type SessionAttachAllResult = typeof SessionAttachAllResult.Type;
 export const SessionBootstrapInput = Schema.Struct({
   /** Which events to receive. 'session' sends every session's events except block_event, plus session_created, session_destroyed, session_moved, and tailscale_status_changed. 'all' also sends block_event and the client events, such as client_joined. */
   eventScope: Schema.String,
-  /** The session to attach to, if it exists. Otherwise the server attaches the first session. Ignored when attach_session_ids is set. */
+  /** The session to attach to, if it exists. Otherwise the server attaches the first session it can. Ignored when attach_session_ids is set. */
   preferredSessionId: Schema.optionalKey(SessionId),
   /** The sessions to attach to, in order. Unknown and repeated IDs are skipped, and an empty list attaches none. Leave it out to let the server pick one. */
   attachSessionIds: Schema.optionalKey(Schema.Array(SessionId)),
@@ -1572,7 +1604,7 @@ export const SessionBootstrapResult = Schema.Struct({
       label: Schema.String,
     }).pipe(Schema.encodeKeys({ sessionId: "session_id" }))),
   }),
-  /** The session the server chose and attached. Null if you sent attach_session_ids or there are no sessions. */
+  /** The session the server chose and attached. Null if you sent attach_session_ids, or if no session could be attached. */
   selectedSession: Schema.OptionFromNullOr(Schema.Struct({
     /** The session's entry from attach_all. */
     session: Schema.Struct({
@@ -1650,7 +1682,7 @@ export const SessionBootstrapResult = Schema.Struct({
       }).pipe(Schema.encodeKeys({ windowId: "window_id", focusedBlockId: "focused_block_id", zoomedBlockId: "zoomed_block_id" }))),
     }).pipe(Schema.encodeKeys({ sessionId: "session_id", activeWindowId: "active_window_id" })),
   })),
-  /** The sessions attached from attach_session_ids, in the order requested. Sessions that don't exist are left out. */
+  /** The sessions attached from attach_session_ids, in the order requested. Sessions that don't exist are left out, and so may be sessions that are being destroyed. */
   attachedSessions: optionalArrayFromNullOr(Schema.Struct({
     /** The session's entry from attach_all. */
     session: Schema.Struct({
@@ -2902,6 +2934,7 @@ export const rexWireMethods = {
   "client.set_label": { input: ClientSetLabelInput, result: ClientSetLabelResult },
   "client.set_script": { input: ClientSetScriptInput, result: ClientSetScriptResult },
   "data.connect": { input: DataConnectInput, result: DataConnectResult },
+  "focus_history.reverse": { input: FocusHistoryReverseInput, result: FocusHistoryReverseResult },
   "help.all": { input: HelpAllInput, result: HelpAllResult },
   "hosts.list": { input: HostsListInput, result: HostsListResult },
   "hosts.put": { input: HostsPutInput, result: HostsPutResult },

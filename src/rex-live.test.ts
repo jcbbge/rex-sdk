@@ -14,7 +14,8 @@ import { join } from "node:path";
 import { NodeFileSystem } from "@effect/platform-node";
 import { Chunk, Effect, Exit, Fiber, Layer, Option, Stream } from "effect";
 import { describe, expect, test } from "vite-plus/test";
-import { REX_API_REVISION } from "./rex-config.ts";
+import { REX_API_REVISION, REX_MIN_API_REVISION } from "./rex-config.ts";
+import { RexControl } from "./rex-control.ts";
 import type { BlockId, SessionId } from "./rex-domain.ts";
 import type { RexSessionEvent } from "./rex-events.ts";
 import { rexLayout } from "./rex-layout.ts";
@@ -25,9 +26,13 @@ const live = process.env["REX_SDK_LIVE"] === "1";
 const serverIsLocal = process.env["REX_SDK_LIVE_SERVER"] === undefined;
 
 function runLive<A, E>(
-  body: (rex: IRexSdk, sessionId: SessionId, shellBlockId: BlockId) => Effect.Effect<A, E>,
+  body: (
+    rex: IRexSdk,
+    sessionId: SessionId,
+    shellBlockId: BlockId,
+  ) => Effect.Effect<A, E, RexControl>,
 ) {
-  const layer: Layer.Layer<RexSdk, unknown> = rexSdkLayerFromOptions({
+  const layer: Layer.Layer<RexSdk | RexControl, unknown> = rexSdkLayerFromOptions({
     ...(process.env["REX_SDK_LIVE_SERVER"] === undefined
       ? {}
       : { server: process.env["REX_SDK_LIVE_SERVER"] }),
@@ -110,9 +115,11 @@ describe.runIf(live)("live Rex server", () => {
         Effect.gen(function* () {
           // `server.version` reports the newest revision the server speaks, not the one in use.
           const version = yield* rex.server.version();
-          expect(Option.getOrElse(version.apiRevision, () => 0)).toBeGreaterThanOrEqual(
-            REX_API_REVISION,
-          );
+          const serverRevision = Option.getOrElse(version.apiRevision, () => 0);
+          const { apiRevision } = yield* (yield* RexControl).connection;
+          expect(apiRevision).toBeGreaterThanOrEqual(REX_MIN_API_REVISION);
+          expect(apiRevision).toBe(Math.min(REX_API_REVISION, serverRevision));
+          console.info(`Rex negotiated API revision ${apiRevision}`);
           yield* rex.server.status();
           yield* rex.server.whoami();
           yield* rex.hosts.list();
@@ -228,7 +235,12 @@ describe.runIf(live)("live Rex server", () => {
           yield* rex.blocks.zoom({ sessionId, blockId: sideBlockId, zoom: true });
           yield* rex.blocks.zoom({ sessionId, blockId: sideBlockId, zoom: false });
           yield* rex.blocks.swap({ sessionId, blockId, otherBlockId: sideBlockId });
+          yield* rex.blocks.focus({ sessionId, blockId: sideBlockId });
           yield* rex.blocks.focus({ sessionId, blockId });
+          const reversed = yield* rex.blocks.reverseFocus({ sessionId });
+          expect(reversed.reversed).toBe(true);
+          expect(reversed.sessionId).toEqual(Option.some(sessionId));
+          expect(reversed.blockId).toEqual(Option.some(sideBlockId));
 
           const window = yield* rex.windows.create({
             sessionId,

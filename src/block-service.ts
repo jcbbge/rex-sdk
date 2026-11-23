@@ -74,6 +74,8 @@ export interface IBlockService {
   readonly focusNext: RexMethodOperation<"session.focus_next_pane">;
   /** `session.focus_previous_pane`: moves focus to the previous block in the active window. */
   readonly focusPrevious: RexMethodOperation<"session.focus_previous_pane">;
+  /** `focus_history.reverse`: steps back through focus changes made by the calling principal (revision 19). */
+  readonly reverseFocus: RexMethodOperation<"focus_history.reverse">;
   /** `session.resize_pane`: moves the border between two blocks to change their sizes. */
   readonly resize: RexMethodOperation<"session.resize_pane">;
   /** `session.set_block_label`: sets a block's label; an empty label restores the default. */
@@ -165,6 +167,7 @@ export const makeBlockService = Effect.gen(function* () {
     focusDirection: rexMethodOperation(control, attachments, "session.focus_direction"),
     focusNext: rexMethodOperation(control, attachments, "session.focus_next_pane"),
     focusPrevious: rexMethodOperation(control, attachments, "session.focus_previous_pane"),
+    reverseFocus: rexMethodOperation(control, attachments, "focus_history.reverse"),
     resize: rexMethodOperation(control, attachments, "session.resize_pane"),
     setLabel: rexMethodOperation(control, attachments, "session.set_block_label"),
     own: rexMethodOperation(control, attachments, "session.own_block"),

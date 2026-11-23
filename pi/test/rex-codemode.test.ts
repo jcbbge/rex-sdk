@@ -149,6 +149,7 @@ const unreachedMethods = new Set([
   "session.detach",
   "session.attach_all",
   "session.bootstrap",
+  "focus_history.reverse",
   "com.superlogical.onboarding.set_step",
   "com.superlogical.onboarding.state",
 ]);

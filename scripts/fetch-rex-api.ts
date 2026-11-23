@@ -3,7 +3,7 @@
  *
  * Usage: `vp run fetch:rex-api` (uses `REX_SERVER` or the default personal server). Run it only
  * when deliberately moving the SDK to a new server release, then run `vp run generate`, review
- * the diff, and update the API revision in `package.json` and `src/rex-config.ts` if it changed.
+ * the diff, and update the snapshot metadata in `package.json` and the offered revision in `src/rex-config.ts`.
  *
  * Writes `schema/rex-api.json` (`GET /api/help`), `schema/rex-block-creators.json`
  * (`block_creator.list`), and `docs/research/rex-api-revision-<N>.md` (`GET /llms.txt`).

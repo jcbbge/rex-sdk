@@ -14,12 +14,15 @@ import { BlockId, SessionId } from "./rex-domain.ts";
 import { RexConfigurationError } from "./rex-errors.ts";
 
 /**
- * The Rex API revision this SDK was generated for and requires.
+ * The newest Rex API revision this SDK was generated for.
  *
  * @category constants
  * @since 0.1.0
  */
-export const REX_API_REVISION = 18;
+export const REX_API_REVISION = 19;
+
+/** The oldest Rex API revision supported by the core SDK operations. */
+export const REX_MIN_API_REVISION = 18;
 
 /**
  * Where the Rex server listens: a Unix socket (or Windows named pipe) path, or a URL.
@@ -88,7 +91,7 @@ export interface IRexConfig {
   readonly endpointDisplay: string;
   /** How the SDK identifies itself in the handshake. */
   readonly client: RexClientIdentity;
-  /** The API revision the SDK requires. */
+  /** The newest API revision the SDK offers in the handshake. */
   readonly apiRevision: typeof REX_API_REVISION;
   /** How long to wait for each response. */
   readonly requestTimeout: Duration.Duration;

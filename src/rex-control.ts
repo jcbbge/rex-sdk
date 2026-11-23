@@ -28,7 +28,7 @@ import {
 } from "effect";
 import { Socket } from "effect/socket";
 import { WebSocket } from "ws";
-import { RexConfig, type IRexConfig, rexConfigLayer } from "./rex-config.ts";
+import { REX_MIN_API_REVISION, RexConfig, type IRexConfig, rexConfigLayer } from "./rex-config.ts";
 import { ClientId } from "./rex-domain.ts";
 import {
   RexConfigurationError,
@@ -263,7 +263,7 @@ function closeFailure(
       if (reason.code === 1008 && closeReason.startsWith("no common API revision")) {
         return new RexUnsupportedApiRevision({
           endpoint: config.endpointDisplay,
-          requiredRevision: config.apiRevision,
+          requiredRevision: REX_MIN_API_REVISION,
           serverReason: closeReason,
         });
       }
@@ -403,7 +403,7 @@ export const makeRexControl = Effect.gen(function* () {
     const hello = {
       type: "hello",
       api_revision: config.apiRevision,
-      api_min_revision: config.apiRevision,
+      api_min_revision: REX_MIN_API_REVISION,
       client: {
         kind: config.client.kind,
         name: config.client.name,
@@ -457,12 +457,13 @@ export const makeRexControl = Effect.gen(function* () {
         `the server speaks ${welcome.protocol}`,
       );
     }
-    if ((welcome.api_revision ?? 0) !== config.apiRevision) {
+    const apiRevision = welcome.api_revision ?? 0;
+    if (apiRevision < REX_MIN_API_REVISION) {
       yield* Scope.close(scope, Exit.void);
       return yield* new RexUnsupportedApiRevision({
         endpoint: config.endpointDisplay,
-        requiredRevision: config.apiRevision,
-        serverRevision: welcome.api_revision ?? 0,
+        requiredRevision: REX_MIN_API_REVISION,
+        serverRevision: apiRevision,
       });
     }
 
@@ -477,7 +478,7 @@ export const makeRexControl = Effect.gen(function* () {
             : decodeClientId(welcome.client.id),
         resumed: welcome.client?.resumed ?? false,
         maxMessageBytes: welcome.limits.max_message_bytes,
-        apiRevision: welcome.api_revision ?? 0,
+        apiRevision,
         features: welcome.features ?? [],
       },
       writer,

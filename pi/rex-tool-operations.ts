@@ -1235,6 +1235,7 @@ export const rexToolOperations: readonly RexToolOperation[] = [
  * caller-owned scope, manage the connection itself, or are covered by a tool above.
  */
 export const rexToolExclusions: Readonly<Record<string, string>> = {
+  "blocks.reverseFocus": "the fork policy keeps focus changes out of Pi",
   "sessions.attach": "the SDK attaches automatically for every session-scoped call",
   "sessions.detach": "the SDK manages this connection's attachments",
   "sessions.attachAll": "the SDK manages this connection's attachments; use rex_events_waitFor",

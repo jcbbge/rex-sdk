@@ -50,7 +50,7 @@ const exitTag = <A, E extends { readonly _tag: string }>(exit: Exit.Exit<A, E>) 
     : ["Success"];
 
 describe("RexControl", () => {
-  test("says hello with API revision 18 and the configured identity", () =>
+  test("offers revision 19 with a minimum of 18 and the configured identity", () =>
     runControlTest((server) =>
       Effect.gen(function* () {
         const control = yield* RexControl;
@@ -62,7 +62,7 @@ describe("RexControl", () => {
         ).toBe("client:test-1");
         expect(server.connections()[0]?.hello).toEqual({
           type: "hello",
-          api_revision: 18,
+          api_revision: 19,
           api_min_revision: 18,
           client: { kind: "agent", name: "rex-sdk-test", version: "0.0.0" },
         });
@@ -166,7 +166,19 @@ describe("RexControl", () => {
       }),
     ));
 
-  test("rejects a server that speaks another API revision", () =>
+  test.each([19, 20])("uses a negotiated revision of %s", (apiRevision) =>
+    runControlTest(
+      () =>
+        Effect.gen(function* () {
+          const control = yield* RexControl;
+          const info = yield* control.connection;
+          expect(info.apiRevision).toBe(apiRevision);
+        }),
+      { apiRevision },
+    ),
+  );
+
+  test("rejects a negotiated revision below the minimum", () =>
     runControlTest(
       () =>
         Effect.gen(function* () {

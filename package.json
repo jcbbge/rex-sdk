@@ -69,8 +69,8 @@
     ]
   },
   "rex": {
-    "apiRevision": 18,
-    "serverVersion": "0.1.0-preview.21",
-    "serverCommit": "202b1b3fc0219883112258a8d0f9f95e2d47daa9"
+    "apiRevision": 19,
+    "serverVersion": "0.1.0-preview.22",
+    "serverCommit": "a086db17db8d464627c77e3bb0be6d462668b0ac"
   }
 }
