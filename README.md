@@ -31,9 +31,9 @@ See [examples/project-workspace.ts](examples/project-workspace.ts) for a fuller 
 
 ## Compatibility
 
-- Rex API revision **18** only. The SDK checks the revision in the handshake and fails with
-  `RexUnsupportedApiRevision` on any other.
-- Verified against Rex `0.1.0-preview.21`.
+- The SDK offers Rex API revision **19** and accepts revisions **18** and newer. Read the negotiated
+  revision from `(yield* (yield* RexControl).connection).apiRevision`.
+- Verified against Rex `0.1.0-preview.22`.
 - Node.js 22.18 or newer; `effect` 4.1.
 
 ## Rex terms
@@ -62,6 +62,9 @@ See [examples/project-workspace.ts](examples/project-workspace.ts) for a fuller 
 | `targets`   | `resolve`, `complete`                                                                                                                                                                      |
 | `hosts`     | `list`, `put`, `remove`                                                                                                                                                                    |
 | `creators`  | `list`                                                                                                                                                                                     |
+
+Use `rex.blocks.reverseFocus({ sessionId })` to step back through the caller's focus history
+within a session on revision 19.
 
 Every operation's arguments are the documented method's arguments in camelCase, so
 `rex api describe <method>` documents them too.
@@ -127,16 +130,30 @@ Each failure is a tagged error, so you can recover with `Effect.catchTag`:
   `RexConnectionLost` means the request may have run. The SDK never resends it; check the state
   first.
 - **Streams**: `RexEventsLost`, `RexDataRejected`, `RexBlockClosed`, `RexDataStreamFailed`.
-- **Contract**: `RexInvalidResponse`, when the server's answer doesn't match API revision 18.
+- **Contract**: `RexInvalidResponse`, when the server's answer fails the SDK's response codec.
 
 ## pi extension
 
 The [`pi/`](pi/README.md) directory is a [pi](https://pi.dev) extension that gives codemode
-scripts one tool per SDK operation (`rex_terminals_writeLine`, `rex_sessions_view`, …):
+scripts scoped Rex tools (`rex_terminals_writeLine`, `rex_sessions_view`, …):
 
 ```sh
-pi install git:github.com/dmmulroy/rex-sdk
+pi install git:github.com/jcbbge/rex-sdk
 ```
+
+## Use the fork by local path
+
+Install dependencies and build the SDK checkout before adding it to a consumer project.
+pnpm links the checkout and uses its built package.
+
+```sh
+pnpm -C ~/rex-sdk install
+pnpm -C ~/rex-sdk run build
+pnpm add ~/rex-sdk
+node --input-type=module -e 'import { RexSdk } from "rex-sdk"; console.log(RexSdk.key)'
+```
+
+Run the build again after updating the SDK checkout.
 
 ## Development
 

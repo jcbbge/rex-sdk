@@ -13,6 +13,12 @@ peerDependencyRules:
   allowedVersions:
     vite: "*"
 permissions:
+  "@google/genai":
+    build: false
+  esbuild:
+    build: false
+  protobufjs:
+    build: false
   traits:
     skills: true
 skills:
