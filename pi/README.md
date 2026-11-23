@@ -1,22 +1,16 @@
 # rex codemode (pi extension)
 
 A [pi](https://pi.dev) extension that exposes this SDK to codemode scripts as `tools.rex_*`, one
-tool per SDK operation. It is the Rex counterpart of the Herdr codemode extension.
+tool per permitted SDK operation. It is the Rex counterpart of the Herdr codemode extension.
 
 ```sh
-pi install git:github.com/dmmulroy/rex-sdk
+pi install git:github.com/jcbbge/rex-sdk
 ```
 
 ```js
 const { here } = await tools.rex_search({});
-const { sessionId } = here;
-const split = await tools.rex_blocks_splitBeside({
-  sessionId,
-  anchorId: here.blockId,
-  placement: "right",
-});
-const blockId = split.blockIds[0];
-await tools.rex_terminals_writeLine({
+const { sessionId, blockId } = here;
+const { markId } = await tools.rex_terminals_writeLine({
   sessionId,
   blockId,
   text: "pnpm test && echo __rex_ok || echo __rex_failed",
@@ -24,6 +18,7 @@ await tools.rex_terminals_writeLine({
 const done = await tools.rex_terminals_waitForOutput({
   sessionId,
   blockId,
+  since: markId,
   match: { type: "regex", value: "^__rex_(ok|failed)$" },
   timeoutMs: 120000,
 });
@@ -31,6 +26,9 @@ return done.timedOut ? "still running" : done.match.groups[0];
 ```
 
 ## Tool surface
+
+Hands never control the operator’s view. The fork policy filters tools that can take focus,
+control the client view, or stop Rex from registration and search.
 
 - **Names** mirror the SDK path: `rex.terminals.writeLine` → `rex_terminals_writeLine`.
 - **Only `rex_search` is listed** in the codemode description, after Cloudflare's Code Mode MCP
@@ -56,7 +54,7 @@ return done.timedOut ? "still running" : done.match.groups[0];
   `RexSessionNotFound: …` or `RexConnectionLost: …`.
 - **Deadlines**: `requestTimeoutMs`, accepted by every tool, bounds each request the call makes.
 - **Annotations**: reads and waits are `readOnlyHint`; closes, `sessions_destroy`,
-  `terminals_clear`/`reset`, `server_stop`, Tailscale disable/logout, and `hosts_remove` are
+  `terminals_clear`/`reset`, Tailscale disable/logout, and `hosts_remove` are
   `destructiveHint`.
 - **Not exposed** (see `rexToolExclusions` in `rex-tool-operations.ts`): streams, port forwards,
   byte streams, request handlers, and the attachment methods the SDK manages itself.

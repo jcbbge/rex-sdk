@@ -33,7 +33,11 @@ import {
   shouldRegisterRexTools,
   type RexCodemodeTool,
 } from "../index.ts";
-import { rexToolExclusions, rexToolOperations } from "../rex-tool-operations.ts";
+import { isForkDeniedRexTool, rexToolOperations } from "../fork-policy.ts";
+import {
+  rexToolExclusions,
+  rexToolOperations as upstreamOperations,
+} from "../rex-tool-operations.ts";
 import { RexToolError, type RexToolRuntime } from "../rex-tool-runtime.ts";
 import { encodeRexToolResult } from "../rex-tool-schemas.ts";
 import { REX_SEARCH_DEFAULT_LIMIT, REX_SEARCH_TOOL_NAME } from "../rex-tool-search.ts";
@@ -113,7 +117,6 @@ const layout = { _tag: "Split", direction: "horizontal", before: terminal, after
 /** Arguments for tools that do more than pass one documented example through. */
 const customArguments: { readonly [tool: string]: { readonly [key: string]: unknown } } = {
   rex_search: { query: "terminal" },
-  rex_blocks_splitBeside: { sessionId, anchorId: blockId, placement: "right", layout: terminal },
   rex_terminals_writeLine: { ...here, text: "ls" },
   rex_terminals_waitForOutput: {
     ...here,
@@ -128,9 +131,6 @@ const customArguments: { readonly [tool: string]: { readonly [key: string]: unkn
   rex_terminals_readFile: { ...here, path: "report.csv" },
   rex_terminals_pasteFiles: { ...here, files: [{ name: "notes.txt", text: "hello" }] },
   rex_sessions_create: { label: "fixture", initialWindows: [{ windowLabel: "Code", layout }] },
-  rex_windows_create: { sessionId, windowLabel: "Code", layout },
-  rex_blocks_split: { sessionId, anchorId: blockId, direction: "vertical", side: "after", layout },
-  rex_layers_create: { sessionId, bounds: [0.1, 0.1, 0.5, 0.5], layout: terminal },
   rex_tunnels_createDial: { sessionId, options: { host: "127.0.0.1", port: 5432 } },
   rex_tunnels_createListen: { sessionId, label: "web", options: { port: 0 } },
   rex_events_waitFor: { type: "session_destroyed", sessionId, timeoutMs: 2_000 },
@@ -150,6 +150,12 @@ const unreachedMethods = new Set([
   "session.attach_all",
   "session.bootstrap",
   "focus_history.reverse",
+  "session.new_layer",
+  "session.new_split",
+  "session.new_window",
+  ...upstreamOperations
+    .filter(isForkDeniedRexTool)
+    .flatMap(({ method }) => (method === undefined ? [] : [method])),
   "com.superlogical.onboarding.set_step",
   "com.superlogical.onboarding.state",
 ]);
@@ -308,6 +314,47 @@ describe("rex codemode tools", () => {
     }
   });
 
+  test("the fork denylist applies to registration and search", async () => {
+    const deniedNames = upstreamOperations
+      .filter(isForkDeniedRexTool)
+      .map(({ name }) => `rex_${name}`);
+    expect(deniedNames).toEqual(
+      expect.arrayContaining([
+        "rex_windows_focus",
+        "rex_blocks_focus",
+        "rex_blocks_splitBeside",
+        "rex_windows_create",
+        "rex_clients_action",
+        "rex_clients_perform",
+        "rex_clients_key",
+        "rex_server_stop",
+      ]),
+    );
+    expect(
+      isForkDeniedRexTool({
+        name: "blocks_reverseFocus",
+        method: "focus_history.reverse",
+        fields: {},
+        input: undefined,
+      }),
+    ).toBe(true);
+    expect(
+      isForkDeniedRexTool({
+        name: "windows_switchToTab",
+        method: undefined,
+        fields: {},
+        input: undefined,
+      }),
+    ).toBe(true);
+    const registered = new Set(tools.registered.map(({ name }) => name));
+    expect(deniedNames.filter((name) => registered.has(name))).toEqual([]);
+    expect(registered.has("rex_blocks_reverseFocus")).toBe(false);
+
+    const search = await callTool(tools.tools, REX_SEARCH_TOOL_NAME, { query: "focus", limit: 50 });
+    const hits = arrayOf(fieldOf(search.structuredContent, "tools"));
+    expect(hits.every((hit) => registered.has(String(fieldOf(hit, "name"))))).toBe(true);
+  });
+
   test("every SDK operation has a tool or a stated exclusion", async () => {
     const exit = await tools.runtime.run(
       Effect.gen(function* () {
@@ -327,7 +374,7 @@ describe("rex codemode tools", () => {
       collect(service, namespace);
     }
     const toolPaths = new Set(
-      rexToolOperations.map((operation) => operation.name.replaceAll("_", ".")),
+      upstreamOperations.map((operation) => operation.name.replaceAll("_", ".")),
     );
     const excluded = new Set(Object.keys(rexToolExclusions));
     expect(sdkPaths.filter((path) => !toolPaths.has(path) && !excluded.has(path))).toEqual([]);
@@ -358,11 +405,11 @@ describe("rex codemode tools", () => {
     expect(fieldOf(waits, "tools", 0, "name")).toBe("rex_terminals_waitForOutput");
     expect(arrayOf(fieldOf(waits, "tools")).length).toBe(REX_SEARCH_DEFAULT_LIMIT);
 
-    const closes = arrayOf(fieldOf(await search({ query: "close", limit: 50 }), "tools"));
+    const closes = arrayOf(fieldOf(await search({ query: "destroy", limit: 50 }), "tools"));
     expect(
       closes.some(
         (hit) =>
-          fieldOf(hit, "name") === "rex_windows_close" && fieldOf(hit, "destructive") === true,
+          fieldOf(hit, "name") === "rex_sessions_destroy" && fieldOf(hit, "destructive") === true,
       ),
     ).toBe(true);
     const read = arrayOf(fieldOf(await search({ query: "read terminal" }), "tools")).find(
@@ -419,13 +466,10 @@ describe("rex codemode tools", () => {
   test("flat parameters reach the wire as the SDK's positional arguments and input", async () => {
     const firstRequest = server.requests().length;
     await callTool(tools.tools, "rex_terminals_read", { ...here, trim: true });
-    await callTool(tools.tools, "rex_blocks_splitBeside", {
-      sessionId,
-      anchorId: blockId,
-      placement: "left",
-      ratio: 0.3,
+    await callTool(tools.tools, "rex_sessions_create", {
+      label: "fixture",
+      initialWindows: [{ windowLabel: "Code", layout: terminal }],
     });
-    await callTool(tools.tools, "rex_windows_create", { sessionId, layout: terminal });
     const sent = (method: string) =>
       server
         .requests()
@@ -436,23 +480,20 @@ describe("rex codemode tools", () => {
       block_id: blockId,
       args: { trim: true, max_bytes: 524_288 },
     });
-    expect(sent("session.new_split")).toMatchObject({
-      session_id: sessionId,
-      anchor_id: blockId,
-      direction: "horizontal",
-      side: "before",
-      ratio: 0.3,
-      layout: { block: { flavor: "com.superlogical.terminal.shell" } },
-    });
-    expect(sent("session.new_window")).toEqual({
-      session_id: sessionId,
-      layout: {
-        block: {
-          flavor: "com.superlogical.terminal.shell",
-          label: "Code",
-          options: { cwd: "/tmp", command: ["ls"] },
+    expect(sent("session.create")).toEqual({
+      label: "fixture",
+      initial_windows: [
+        {
+          window_label: "Code",
+          layout: {
+            block: {
+              flavor: "com.superlogical.terminal.shell",
+              label: "Code",
+              options: { cwd: "/tmp", command: ["ls"] },
+            },
+          },
         },
-      },
+      ],
     });
   });
 

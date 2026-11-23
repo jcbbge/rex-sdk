@@ -14,7 +14,7 @@ import type {
 import type { Layer } from "effect";
 import type { TSchema } from "typebox";
 import { rexSdkLayerFromOptions, type RexSdk } from "../src/index.ts";
-import { rexToolOperations, type RexToolOperation } from "./rex-tool-operations.ts";
+import { rexToolOperations, type RexToolOperation } from "./fork-policy.ts";
 import {
   makeRexToolProgram,
   RexToolError,
