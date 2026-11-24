@@ -14,6 +14,7 @@ namespace services over shared, scoped infrastructure.
 | `schema/rex-events.json`               | Server and session event schemas, transcribed from the event reference | hand-written                      |
 | `src/generated/rex-wire-schemas.ts`    | Effect Schema codecs for all of the above                              | `vp run generate`                 |
 | `docs/research/rex-data-bytes-v1.md`   | Observed `rex.data.bytes.v1` contract; Rex doesn't document it         | hand-written; recheck on upgrades |
+| `docs/research/rex-blob-read.md`       | Observed `blob_read` offsets inside characters and `max_bytes` measure | hand-written; recheck on upgrades |
 
 Never hand-edit the generated file or the fetched snapshots.
 

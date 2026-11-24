@@ -24,3 +24,9 @@ permissions:
 skills:
   dirs:
     - .agents/skills
+# Build scripts of transitive dev dependencies that nothing here needs; deny them explicitly so
+# installs in CI don't fail on unapproved builds.
+allowBuilds:
+  "@google/genai": false
+  esbuild: false
+  protobufjs: false

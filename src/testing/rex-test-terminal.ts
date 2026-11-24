@@ -3,7 +3,10 @@
  * its program's exit, kept consistent with each other the way Rex keeps them.
  *
  * - `format` and `blob_read` read one snapshot of the text, in parts when `max_bytes` asks, with
- *   byte offsets and `total` as Rex reports them.
+ *   byte offsets and `total` as Rex reports them. Parts follow the observed contract in
+ *   `docs/research/rex-blob-read.md`: `max_bytes` counts JSON-escaped characters, a part holds at
+ *   least one character, and a read that starts inside a character shows each byte left of it as
+ *   U+FFFD.
  * - The data stream starts with a snapshot and a `resize` message, then carries what the program
  *   prints and a `child_exited` message when it exits.
  * - `write` echoes typed text, as a shell does: it appears in the text and on the stream.
@@ -11,6 +14,7 @@
  * @since 0.1.0
  */
 import { Effect, Schema } from "effect";
+import type { RexTerminalText } from "../rex-terminal-text.ts";
 import {
   rexTestServerError,
   type IRexTestServer,
@@ -61,13 +65,49 @@ const BlobReadArgs = Schema.Struct({
 const WriteArgs = Schema.Struct({ args: Schema.Struct({ data: Schema.String }) });
 const SessionArgs = Schema.Struct({ session_id: Schema.String });
 
-/** The end of `bytes` at or before `end` that doesn't split a UTF-8 character. */
-function characterBoundary(bytes: Uint8Array, end: number): number {
-  let boundary = Math.min(end, bytes.length);
-  while (boundary > 0 && boundary < bytes.length && ((bytes[boundary] ?? 0) & 0xc0) === 0x80) {
-    boundary -= 1;
+/** What a character counts toward `max_bytes`, as Rex measures it: JSON-escaped, Go style. */
+function escapedSize(lead: number, length: number): number {
+  if (length > 1) return length;
+  if (lead === 0x22 || lead === 0x5c || [0x0a, 0x0d, 0x09, 0x08, 0x0c].includes(lead)) return 2;
+  if (lead < 0x20 || lead === 0x3c || lead === 0x3e || lead === 0x26) return 6;
+  return 1;
+}
+
+/** The size of the UTF-8 character whose first byte is `lead`. */
+function characterLength(lead: number): number {
+  if (lead >= 0xf0) return 4;
+  if (lead >= 0xe0) return 3;
+  if (lead >= 0xc0) return 2;
+  return 1;
+}
+
+/** The default and the cap Rex applies to `blob_read`'s `max_bytes`. */
+const defaultBlobReadBytes = 49_152;
+const maxBlobReadBytes = 983_040;
+
+/**
+ * One part of `bytes` from `offset`, as Rex returns it: whole characters up to `maxBytes` as
+ * Rex measures them, at least one, with each byte of a character cut by `offset` shown as U+FFFD.
+ */
+function rexPart(bytes: Uint8Array, offset: number, maxBytes: number) {
+  let cut = 0;
+  let size = 0;
+  let end = Math.min(offset, bytes.length);
+  while (end < bytes.length) {
+    const lead = bytes[end] ?? 0;
+    const isCut = end - offset === cut && (lead & 0xc0) === 0x80;
+    const length = isCut ? 1 : characterLength(lead);
+    // U+2028 and U+2029 escape to six bytes, like the characters below U+0080 above.
+    const lineSeparator = length === 3 && lead === 0xe2 && bytes[end + 1] === 0x80;
+    const paragraph = lineSeparator && (bytes[end + 2] === 0xa8 || bytes[end + 2] === 0xa9);
+    const cost = isCut ? 1 : paragraph ? 6 : escapedSize(lead, length);
+    if (end > offset && size + cost > maxBytes) break;
+    if (isCut) cut += 1;
+    size += cost;
+    end += length;
   }
-  return boundary;
+  const data = "\uFFFD".repeat(cut) + decoder.decode(bytes.subarray(offset + cut, end));
+  return { data, eof: end >= bytes.length };
 }
 
 interface TerminalState {
@@ -121,17 +161,11 @@ function terminalsOf(server: IRexTestServer): Map<string, TerminalState> {
       const maxBytes = Schema.decodeUnknownSync(FormatArgs)(payload).args.max_bytes ?? 0;
       const bytes = encoder.encode(state.content);
       if (maxBytes === 0) return { content: state.content };
-      if (bytes.length <= maxBytes)
-        return { content: state.content, total: bytes.length, eof: true };
+      const first = rexPart(bytes, 0, Math.min(maxBytes, maxBlobReadBytes));
+      if (first.eof) return { content: first.data, total: bytes.length, eof: true };
       const id = nextBlob++;
       state.blobs.set(id, bytes);
-      const first = characterBoundary(bytes, maxBytes);
-      return {
-        content: decoder.decode(bytes.subarray(0, first)),
-        id,
-        total: bytes.length,
-        eof: false,
-      };
+      return { content: first.data, id, total: bytes.length, eof: false };
     }),
   );
   server.handle(
@@ -139,13 +173,8 @@ function terminalsOf(server: IRexTestServer): Map<string, TerminalState> {
     route((state, payload) => {
       const { id, offset = 0, max_bytes } = Schema.decodeUnknownSync(BlobReadArgs)(payload).args;
       const bytes = state.blobs.get(id) ?? new Uint8Array(0);
-      const end = characterBoundary(bytes, offset + (max_bytes ?? bytes.length));
-      return {
-        id,
-        data: decoder.decode(bytes.subarray(Math.min(offset, end), end)),
-        total: bytes.length,
-        eof: end >= bytes.length,
-      };
+      const limit = Math.min(max_bytes || defaultBlobReadBytes, maxBlobReadBytes);
+      return { id, ...rexPart(bytes, offset, limit), total: bytes.length };
     }),
   );
   server.handle(
@@ -214,4 +243,35 @@ export function startRexTestTerminal(
     },
     reads: () => state.reads,
   };
+}
+
+/**
+ * What `terminals.readTail` should return for `content`, worked out from its bytes alone: every
+ * line that starts within the last `maxBytes` bytes, with its byte offset and its trailing spaces
+ * trimmed. Tests compare the SDK with it, against the test terminal and against a real server.
+ */
+export function referenceRexTerminalTail(content: string, maxBytes: number): RexTerminalText {
+  const bytes = Buffer.from(content);
+  const windowStart = Math.max(bytes.length - maxBytes, 0);
+  const lines: string[] = [];
+  const lineOffsets: number[] = [];
+  let start = 0;
+  for (let index = 0; index <= bytes.length; index += 1) {
+    if (index < bytes.length && bytes[index] !== 0x0a) continue;
+    if (start >= windowStart) {
+      lines.push(
+        bytes
+          .subarray(start, index)
+          .toString("utf8")
+          .replace(/[ \t\r]+$/, ""),
+      );
+      lineOffsets.push(start);
+    }
+    start = index + 1;
+  }
+  while (lines.at(-1) === "") {
+    lines.pop();
+    lineOffsets.pop();
+  }
+  return { lines, lineOffsets, truncated: windowStart > 0 };
 }

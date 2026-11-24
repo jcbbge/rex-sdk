@@ -1,7 +1,7 @@
 /**
  * Terminal text, activity, watches, and waits, against a scripted terminal on the test server.
  */
-import { Effect, Exit, Fiber, Option, Stream } from "effect";
+import { Effect, Exit, Fiber, Option, Schema, Stream } from "effect";
 import { describe, expect, test } from "vite-plus/test";
 import { BlockId, SessionId } from "./rex-domain.ts";
 import { RexSdk } from "./rex-sdk.ts";
@@ -9,16 +9,98 @@ import type { RexTerminalActivity } from "./rex-terminal-activity.ts";
 import { makeRexTerminalText } from "./rex-terminal-text.ts";
 import type { RexTerminalFrame } from "./rex-terminal-watch.ts";
 import { runRexSdkTest } from "./testing/rex-test-runtime.ts";
-import { startRexTestTerminal } from "./testing/rex-test-terminal.ts";
+import { referenceRexTerminalTail, startRexTestTerminal } from "./testing/rex-test-terminal.ts";
 
 const sessionId = SessionId.make("session:01a1aaaa-0000-0000-0000-000000000001");
 const blockId = BlockId.make("block:01a1bbbb-0000-0000-0000-000000000001");
 const target = { sessionId, blockId };
+const otherTarget = {
+  sessionId,
+  blockId: BlockId.make("block:01a1bbbb-0000-0000-0000-000000000002"),
+};
+
+const decodeBlobReadOffset = Schema.decodeUnknownSync(
+  Schema.Struct({ args: Schema.Struct({ offset: Schema.Number }) }),
+);
 
 const failureTags = <A, E extends { readonly _tag: string }>(exit: Exit.Exit<A, E>) =>
   Exit.isFailure(exit)
     ? exit.cause.reasons.map((reason) => (reason._tag === "Fail" ? reason.error._tag : reason._tag))
     : ["Success"];
+
+/** A deterministic random number generator, so a failing case can be replayed. */
+function seededRandom(seed: number) {
+  let state = seed;
+  return () => {
+    state = (state + 0x6d2b79f5) | 0;
+    let mixed = Math.imul(state ^ (state >>> 15), 1 | state);
+    mixed = (mixed + Math.imul(mixed ^ (mixed >>> 7), 61 | mixed)) ^ mixed;
+    return ((mixed ^ (mixed >>> 14)) >>> 0) / 4_294_967_296;
+  };
+}
+
+/** Output mixing ASCII, 2-, 3-, and 4-byte characters, a real U+FFFD, escaped characters, trailing spaces, and blank lines. */
+function generatedOutput(seed: number, lineCount: number): string {
+  const pieces = ["word", "é", "✓", "€", "😀", "\uFFFD", '"', "\\", "<", "&", ">", " ", "  "];
+  const random = seededRandom(seed);
+  const lines = Array.from({ length: lineCount }, () => {
+    const length = Math.floor(random() * 12);
+    return Array.from({ length }, () => pieces[Math.floor(random() * pieces.length)] ?? "").join(
+      "",
+    );
+  });
+  return `${lines.join("\n")}\n\n`;
+}
+
+describe("the test terminal", () => {
+  test("answers blob_read as the probe in docs/research/rex-blob-read.md recorded", () =>
+    runRexSdkTest((server) =>
+      Effect.gen(function* () {
+        // The probe's output from its `aa✓bb` line on, so offsets are the probe's minus 43.
+        startRexTestTerminal(server, target, { content: 'aa✓bb\n"q"\\x\n\uFFFD€' });
+        startRexTestTerminal(server, otherTarget, { content: "a<b&c>d ef" });
+        const rex = yield* RexSdk;
+        const read = (from: typeof target, offset: number, maxBytes: number) =>
+          Effect.gen(function* () {
+            const first = yield* rex.terminals.format(from, {
+              trim: true,
+              unwrap: true,
+              maxBytes: 1,
+            });
+            const id = Option.getOrThrow(first.id);
+            const part = yield* rex.terminals.blobRead(from, { id, offset, maxBytes });
+            return [part.data, part.eof] as const;
+          });
+        const observed: ReadonlyArray<readonly [number, number, string, boolean]> = [
+          [2, 1, "✓", false],
+          [3, 1, "\uFFFD", false],
+          [3, 3, "\uFFFD\uFFFDb", false],
+          [3, 6, "\uFFFD\uFFFDbb\n", false],
+          [4, 4, "\uFFFDbb", false],
+          [0, 3, "aa", false],
+          [8, 2, '"', false],
+          [8, 3, '"q', false],
+          [11, 4, "\\x", false],
+          [14, 4, "\uFFFD", false],
+          [14, 6, "\uFFFD€", true],
+          [15, 6, "\uFFFD\uFFFD€", true],
+          [18, 1, "\uFFFD", false],
+          [18, 2, "\uFFFD\uFFFD", true],
+          [20, 1, "", true],
+        ];
+        for (const [offset, maxBytes, data, eof] of observed) {
+          expect([offset, maxBytes, ...(yield* read(target, offset, maxBytes))]).toEqual([
+            offset,
+            maxBytes,
+            data,
+            eof,
+          ]);
+        }
+        expect(yield* read(otherTarget, 0, 6)).toEqual(["a", false]);
+        expect(yield* read(otherTarget, 6, 3)).toEqual(["d e", false]);
+      }),
+    ));
+});
 
 describe("readTail", () => {
   test("reads only the end of long output, with exact offsets, from one snapshot", () =>
@@ -39,6 +121,145 @@ describe("readTail", () => {
         // The first part, then one jump to the end: the long middle is never read.
         const blobReads = server.requestsFor("com.superlogical.terminal.blob_read");
         expect(blobReads.length).toBe(1);
+      }),
+    ));
+
+  test("keeps only the last maxBytes when the first part overlaps the tail", () =>
+    runRexSdkTest((server) =>
+      Effect.gen(function* () {
+        // 500 bytes ending with a unique marker line, then exactly 1,000 bytes of tail lines.
+        const head = `${"h".repeat(480)}\nMARKER-BEFORE-TAIL\n`;
+        const tailLines = Array.from(
+          { length: 100 },
+          (_, index) => `tail ${String(index).padStart(4, "0")}${index === 0 ? "!" : ""}`,
+        );
+        const tailContent = tailLines.join("\n");
+        expect([Buffer.byteLength(head), Buffer.byteLength(tailContent)]).toEqual([500, 1_000]);
+        startRexTestTerminal(server, target, { content: head + tailContent });
+        const rex = yield* RexSdk;
+        const tail = yield* rex.terminals.readTail(target, { maxBytes: 1_000 });
+        expect(tail.lines).not.toContain("MARKER-BEFORE-TAIL");
+        expect(tail.truncated).toBe(true);
+        // The line that starts exactly at the cutoff is whole, so it stays.
+        expect(tail.lines).toEqual(tailLines);
+        expect(tail.lineOffsets).toEqual(makeRexTerminalText(tailContent, 500).lineOffsets);
+        expect(tail.lineOffsets[0]).toBe(500);
+      }),
+    ));
+
+  test("matches a byte-level reference across sizes, characters, and both reading paths", () =>
+    runRexSdkTest((server) =>
+      Effect.gen(function* () {
+        const rex = yield* RexSdk;
+        // Short output overlaps the first part; long output makes small tails jump to the end.
+        for (const [seed, lineCount] of [
+          [1, 60],
+          [2, 4_000],
+        ] as const) {
+          const content = generatedOutput(seed, lineCount);
+          const bytes = Buffer.from(content);
+          startRexTestTerminal(server, target, { content });
+          const random = seededRandom(seed);
+          const sizes = new Set([bytes.length - 1, bytes.length, bytes.length + 1]);
+          const lineStarts = referenceRexTerminalTail(content, bytes.length).lineOffsets.slice(-8);
+          for (const start of lineStarts) {
+            // At a line start, one byte either side, and inside the character that may follow.
+            for (const delta of [-1, 0, 1, 2, 3]) sizes.add(bytes.length - (start + delta));
+          }
+          while (sizes.size < 60)
+            sizes.add(1 + Math.floor(random() * Math.min(bytes.length, 6_000)));
+          for (const maxBytes of sizes) {
+            if (maxBytes <= 0) continue;
+            const tail = yield* rex.terminals.readTail(target, { maxBytes });
+            expect({ maxBytes, tail }).toEqual({
+              maxBytes,
+              tail: referenceRexTerminalTail(content, maxBytes),
+            });
+          }
+        }
+      }),
+    ));
+
+  test("a jump that lands inside a character, or inside a real U+FFFD, reads once from there", () =>
+    runRexSdkTest((server) =>
+      Effect.gen(function* () {
+        const rex = yield* RexSdk;
+        const ending = "check ✓ face 😀 replacement \uFFFD end";
+        const content = `${"filler line\n".repeat(10_000)}${ending}\nlast`;
+        const bytes = Buffer.from(content);
+        startRexTestTerminal(server, target, { content });
+        const endingStart = bytes.length - Buffer.byteLength(`${ending}\nlast`);
+        for (const character of ["✓", "😀", "\uFFFD"]) {
+          const at = endingStart + Buffer.byteLength(ending.slice(0, ending.indexOf(character)));
+          for (let inside = 1; inside < Buffer.byteLength(character); inside += 1) {
+            // The window starts right after the byte the jump lands on.
+            const maxBytes = bytes.length - (at + inside) - 1;
+            const before = server.requestsFor("com.superlogical.terminal.blob_read").length;
+            const tail = yield* rex.terminals.readTail(target, { maxBytes });
+            expect(tail).toEqual(referenceRexTerminalTail(content, maxBytes));
+            expect(tail.lines).toEqual(["last"]);
+            const reads = server.requestsFor("com.superlogical.terminal.blob_read").slice(before);
+            expect(reads.map((read) => decodeBlobReadOffset(read.payload).args.offset)).toEqual([
+              at + inside,
+            ]);
+          }
+        }
+      }),
+    ));
+
+  test("reads forward from the first part when the jump can't reach the end in one read", () =>
+    runRexSdkTest((server) =>
+      Effect.gen(function* () {
+        const rex = yield* RexSdk;
+        // Rex counts each of < > & as six bytes, so 300 KB of them is over one read's 960 KiB.
+        const content = `${"plain line\n".repeat(20_000)}${"<&><&><&>\n".repeat(30_000)}done`;
+        const total = Buffer.byteLength(content);
+        startRexTestTerminal(server, target, { content });
+        const maxBytes = 300_000;
+        const tail = yield* rex.terminals.readTail(target, { maxBytes });
+        expect(tail).toEqual(referenceRexTerminalTail(content, maxBytes));
+        const offsets = server
+          .requestsFor("com.superlogical.terminal.blob_read")
+          .map((read) => decodeBlobReadOffset(read.payload).args.offset);
+        expect(offsets[0]).toBe(total - maxBytes - 1);
+        // Then forward, from the end of the first part, never from the jumped read.
+        // The first part is 64 KiB as Rex measures it: each "plain line\n" counts as 12 bytes for
+        // its 11, so it ends 4 bytes into line 5,462, and forward reading starts there.
+        const forward = offsets.slice(1);
+        expect(forward[0]).toBe(5_461 * 11 + 4);
+        expect(forward).toEqual([...forward].sort((left, right) => left - right));
+      }),
+    ));
+
+  test("counts trimmed trailing spaces in line offsets", () =>
+    runRexSdkTest((server) =>
+      Effect.gen(function* () {
+        const content = Array.from({ length: 200 }, (_, index) => `row ${index}   `).join("\n");
+        startRexTestTerminal(server, target, { content });
+        const rex = yield* RexSdk;
+        const tail = yield* rex.terminals.readTail(target, { maxBytes: 600 });
+        const lastStart = Buffer.byteLength(content) - Buffer.byteLength("row 199   ");
+        expect(tail.lines.at(-1)).toBe("row 199");
+        expect(tail.lineOffsets.at(-1)).toBe(lastStart);
+      }),
+    ));
+
+  test("returns all of a snapshot that fits in maxBytes, untruncated", () =>
+    runRexSdkTest((server) =>
+      Effect.gen(function* () {
+        const content = Array.from(
+          { length: 100 },
+          (_, index) => `fits ${String(index).padStart(4, "0")}`,
+        ).join("\n");
+        expect(Buffer.byteLength(content)).toBe(999);
+        startRexTestTerminal(server, target, { content });
+        const rex = yield* RexSdk;
+        expect(yield* rex.terminals.readTail(target, { maxBytes: 999 })).toEqual(
+          makeRexTerminalText(content),
+        );
+        expect(yield* rex.terminals.readTail(target, { maxBytes: 1_000 })).toEqual(
+          makeRexTerminalText(content),
+        );
       }),
     ));
 

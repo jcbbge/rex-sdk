@@ -2,13 +2,15 @@
  * Live Rex events as a `Stream`, and waiting for one event.
  *
  * Streams subscribe before they attach, so no event between attaching and reading is missed.
+ * Every stream shares one control connection, whose attachments are the union of what all its
+ * streams asked for, so each stream keeps only the events its own options select.
  * Each stream has its own bounded buffer; one that falls behind fails with `RexEventsLost`
  * instead of skipping events. A stream also fails with `RexEventsLost` when the connection ends,
  * because events sent while it was gone are lost. Read the state again and subscribe again.
  *
  * @since 0.1.0
  */
-import { Context, Duration, Effect, Layer, Queue, Stream } from "effect";
+import { Context, Duration, Effect, Layer, Option, Queue, Stream } from "effect";
 import { RexAttachments, type RexEventScope } from "./rex-attachments.ts";
 import { RexControl } from "./rex-control.ts";
 import { rexCoreLayer } from "./rex-core.ts";
@@ -19,7 +21,7 @@ import {
   type RexEventsLost,
   type RexOperationError,
 } from "./rex-errors.ts";
-import { takeRexEvent, type RexEvent } from "./rex-events.ts";
+import { rexEventSessionId, takeRexEvent, type RexEvent } from "./rex-events.ts";
 
 /**
  * Which events a stream receives.
@@ -41,6 +43,56 @@ export interface RexEventStreamOptions {
   readonly server?: RexEventScope | "none" | undefined;
 }
 
+/** Server events a connection receives with `event_scope: "session"` or with no attachment. */
+const sessionScopeServerEvents: ReadonlySet<string> = new Set([
+  "session_created",
+  "session_destroyed",
+  "session_moved",
+  "tailscale_status_changed",
+  "event_dropped",
+  "keymap_changed",
+  "hosts_changed",
+  "client_call_requested",
+  "client_perform_requested",
+  "client_prompt_requested",
+  "client_prompt_ended",
+]);
+
+/**
+ * Whether a stream with these options should receive an event, mirroring what the server would
+ * send a connection attached only as the options ask.
+ *
+ * Every event of a listed session is selected, including block events and its
+ * `session_destroyed`. `server: "session"` adds the session lifecycle and account-wide server
+ * events and every session's events except block events; `server: "all"` adds everything.
+ *
+ * @category predicates
+ * @since 0.1.0
+ */
+export function rexEventStreamSelects(
+  options: RexEventStreamOptions,
+): (event: RexEvent) => boolean {
+  const sessionIds: ReadonlySet<SessionId> = new Set(options.sessionIds ?? []);
+  const server = options.server ?? (options.sessionIds === undefined ? "all" : "none");
+  return (event) => {
+    const sessionId = rexEventSessionId(event);
+    if (Option.isSome(sessionId) && sessionIds.has(sessionId.value)) return true;
+    if (server === "all") return true;
+    if (server === "none") return false;
+    switch (event._tag) {
+      case "SessionEvent":
+        return true;
+      case "TerminalEvent":
+      case "BlockEvent":
+        return false;
+      case "UnknownEvent":
+        return Option.isSome(event.sessionId);
+      case "ServerEvent":
+        return sessionScopeServerEvents.has(event.type);
+    }
+  };
+}
+
 /**
  * Event operations.
  *
@@ -48,7 +100,7 @@ export interface RexEventStreamOptions {
  * @since 0.1.0
  */
 export interface IEventService {
-  /** Every event the options select, from now until the stream is interrupted or fails. */
+  /** Every event the options select, and no other event on the shared connection, from now until the stream is interrupted or fails. */
   readonly stream: (
     options?: RexEventStreamOptions,
   ) => Stream.Stream<RexEvent, RexOperationError | RexEventsLost>;
@@ -96,8 +148,12 @@ export const makeEventService = Effect.gen(function* () {
   const stream = (options: RexEventStreamOptions = {}) =>
     Stream.callback<RexEvent, RexOperationError | RexEventsLost>((queue) =>
       Effect.gen(function* () {
+        const selects = rexEventStreamSelects(options);
         const subscription = yield* subscribeWith(options);
-        while (true) yield* Queue.offer(queue, yield* takeRexEvent(subscription));
+        while (true) {
+          const event = yield* takeRexEvent(subscription);
+          if (selects(event)) yield* Queue.offer(queue, event);
+        }
       }),
     );
 
@@ -107,10 +163,11 @@ export const makeEventService = Effect.gen(function* () {
   ): Effect.Effect<Event, RexOperationError | RexEventsLost> => {
     const wait = Effect.scoped(
       Effect.gen(function* () {
+        const selects = rexEventStreamSelects(options);
         const subscription = yield* subscribeWith(options);
         while (true) {
           const event = yield* takeRexEvent(subscription);
-          if (predicate(event)) return event;
+          if (selects(event) && predicate(event)) return event;
         }
       }),
     );

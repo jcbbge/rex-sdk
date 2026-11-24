@@ -20,6 +20,7 @@ import type { BlockId, SessionId } from "./rex-domain.ts";
 import type { RexSessionEvent } from "./rex-events.ts";
 import { rexLayout } from "./rex-layout.ts";
 import { RexSdk, rexSdkLayerFromOptions, type IRexSdk } from "./rex-sdk.ts";
+import { referenceRexTerminalTail } from "./testing/rex-test-terminal.ts";
 
 const live = process.env["REX_SDK_LIVE"] === "1";
 /** The file transfer and forward tests share file paths and ports with the server: local only. */
@@ -167,6 +168,73 @@ describe.runIf(live)("live Rex server", () => {
           const ports = yield* rex.terminals.ports(target);
           expect(["ok", "partial", "unsupported"]).toContain(ports.status);
           yield* rex.blocks.describe({ sessionId, blockId });
+        }),
+      ),
+    30_000,
+  );
+
+  test(
+    "readTail matches the bytes of the output, including a jump that lands inside a character",
+    () =>
+      runLive((rex, sessionId, blockId) =>
+        Effect.gen(function* () {
+          // Each line ends in two ✓ (3 bytes each); docs/research/rex-blob-read.md has the probe.
+          const script =
+            "i=0; while [ $i -lt 3000 ]; do printf 'tail line %d \\342\\234\\223\\342\\234\\223\\n' $i; i=$((i+1)); done; printf 'tail-done\\n'; exec cat";
+          const split = yield* rex.blocks.splitBeside({
+            sessionId,
+            anchorId: blockId,
+            placement: "right",
+            layout: rexLayout.terminal({
+              shell: "none",
+              command: ["/bin/sh", "-c", script],
+              label: "tail",
+            }),
+          });
+          const tailBlockId = split.blockIds[0];
+          if (tailBlockId === undefined) return yield* Effect.die("no block");
+          const target = { sessionId, blockId: tailBlockId };
+          yield* rex.terminals.waitForOutput(target, /^tail-done$/, { timeout: "10 seconds" });
+          const content = yield* rex.terminals.read(target, { trim: true, unwrap: true });
+          const bytes = Buffer.from(content);
+          const lastCheck = bytes.lastIndexOf("✓");
+          // Scrollback keeps only the newest lines, but well over the windows below.
+          expect(lastCheck).toBeGreaterThan(30_000);
+
+          // A read that starts inside a character shows the bytes it cut as U+FFFD.
+          const first = yield* rex.terminals.format(target, {
+            trim: true,
+            unwrap: true,
+            maxBytes: 1,
+          });
+          const id = Option.getOrThrow(first.id);
+          const cut = yield* rex.terminals.blobRead(target, {
+            id,
+            offset: lastCheck + 1,
+            maxBytes: 4,
+          });
+          expect(cut.data.startsWith("\uFFFD\uFFFD")).toBe(true);
+
+          // Windows whose jump lands on each byte of the last line's ✓s, and on its start.
+          const lastLine = bytes.lastIndexOf("tail line 2999");
+          for (const landing of [
+            lastLine,
+            lastLine + 1,
+            lastCheck - 2,
+            lastCheck + 1,
+            lastCheck + 2,
+          ]) {
+            const maxBytes = bytes.length - landing - 1;
+            const tail = yield* rex.terminals.readTail(target, { maxBytes });
+            expect({ landing, tail }).toEqual({
+              landing,
+              tail: referenceRexTerminalTail(content, maxBytes),
+            });
+          }
+          for (const maxBytes of [1_000, 20_000, bytes.length]) {
+            const tail = yield* rex.terminals.readTail(target, { maxBytes });
+            expect(tail).toEqual(referenceRexTerminalTail(content, maxBytes));
+          }
         }),
       ),
     30_000,

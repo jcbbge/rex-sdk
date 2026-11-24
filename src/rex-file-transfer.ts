@@ -263,9 +263,12 @@ export function makeRexFileTransfer(
         "com.superlogical.terminal.download_begin",
         reply.ticket.value,
       );
+      const stallTimeout = options.stallTimeout ?? defaultDownloadStallTimeout;
+      // A download ends with the server's half-close, then its close; bound that wait as well.
       const stream = yield* openRexBytesStream(config, hello, target.blockId, {
         maxBytes: options.maxBytes,
-        stallTimeout: options.stallTimeout ?? defaultDownloadStallTimeout,
+        stallTimeout,
+        closeTimeout: stallTimeout,
       });
       return {
         _tag: "Download",

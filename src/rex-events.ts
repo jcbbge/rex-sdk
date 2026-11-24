@@ -226,7 +226,9 @@ export function decodeRexEvent(
 }
 
 /**
- * The session an event belongs to, if any.
+ * The session an event belongs to, if any: the session it happened in, or for
+ * `session_destroyed`, `client_script_events_dropped`, and a session's `event_dropped`, the
+ * session it names. Attaching to that session delivers the event.
  *
  * @category accessors
  * @since 0.1.0
@@ -240,9 +242,15 @@ export function rexEventSessionId(event: RexEvent): Option.Option<SessionId> {
     case "UnknownEvent":
       return event.sessionId;
     case "ServerEvent":
-      return event.type === "session_destroyed"
-        ? Option.some(event.payload.sessionId)
-        : Option.none();
+      switch (event.type) {
+        case "session_destroyed":
+        case "client_script_events_dropped":
+          return Option.some(event.payload.sessionId);
+        case "event_dropped":
+          return event.payload.sessionId;
+        default:
+          return Option.none();
+      }
   }
 }
 

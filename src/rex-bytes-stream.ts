@@ -54,6 +54,13 @@ export interface RexBytesStreamLimits {
    * forever.
    */
   readonly stallTimeout?: Duration.Input | undefined;
+  /**
+   * Stop with `RexTransferStalled` when the server has not closed the stream this long after the
+   * other side half-closed. Set it for a stream that ends with the other side's half-close, such
+   * as a download; leave it out for one that stays open, such as a tunnel's idle TCP connection
+   * after a half-close.
+   */
+  readonly closeTimeout?: Duration.Input | undefined;
 }
 
 /**
@@ -102,9 +109,12 @@ export function openRexBytesStream(
       incomingBufferMessages,
     );
     const finished = yield* Deferred.make<void, RexBytesStreamError>();
-    const stallMillis = Option.map(Option.fromUndefinedOr(limits.stallTimeout), (timeout) =>
-      Duration.toMillis(Duration.fromInputUnsafe(timeout)),
-    );
+    const toMillis = (timeout: Duration.Input | undefined) =>
+      Option.map(Option.fromUndefinedOr(timeout), (input) =>
+        Duration.toMillis(Duration.fromInputUnsafe(input)),
+      );
+    const stallMillis = toMillis(limits.stallTimeout);
+    const closeMillis = toMillis(limits.closeTimeout);
     let remoteEnded = false;
     let localEnded = false;
     let settled = false;
@@ -157,16 +167,15 @@ export function openRexBytesStream(
     const pump = Effect.gen(function* () {
       if (!(yield* receive(connection.leftover))) return;
       while (true) {
-        const next =
-          Option.isSome(stallMillis) && !remoteEnded
-            ? yield* pull.pipe(Effect.timeoutOption(stallMillis.value))
-            : Option.some(yield* pull);
+        // Before the server's half-close, the stall timer bounds each message; after it, the close
+        // timer bounds the wait for the server to close the stream.
+        const deadline = remoteEnded ? closeMillis : stallMillis;
+        const next = Option.isSome(deadline)
+          ? yield* pull.pipe(Effect.timeoutOption(deadline.value))
+          : Option.some(yield* pull);
         if (Option.isNone(next)) {
           return yield* fail(
-            new RexTransferStalled(
-              blockId,
-              Option.getOrElse(stallMillis, () => 0),
-            ),
+            new RexTransferStalled(blockId, deadline.pipe(Option.getOrElse(() => 0))),
             true,
           );
         }

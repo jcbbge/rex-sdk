@@ -13,7 +13,8 @@ describe("terminal text", () => {
   test("splits lines, trims them, drops trailing blank rows, and counts UTF-8 offsets", () => {
     const text = makeRexTerminalText("héllo  \n✓ ok\n\n\n", 100);
     expect(text.lines).toEqual(["héllo", "✓ ok"]);
-    expect(text.lineOffsets).toEqual([100, 100 + Buffer.byteLength("héllo") + 1]);
+    // The trimmed trailing spaces still count toward the next line's offset.
+    expect(text.lineOffsets).toEqual([100, 100 + Buffer.byteLength("héllo  ") + 1]);
     expect(text.truncated).toBe(false);
   });
 

@@ -29,6 +29,7 @@ the Rex counterpart to `../herdr-sdk`: one yieldable `RexSdk` aggregate of names
 | Connection, handshake, events plumbing | `src/rex-control.ts`, `src/rex-events.ts`                                                                                            |
 | Data connections, terminal streams     | `src/rex-data-connection.ts`, `src/rex-data-codec.ts`, `src/rex-terminal-stream.ts`                                                  |
 | Terminal text, marks, waits            | `src/rex-terminal-text.ts`, `src/rex-output-query.ts` (pure), `src/rex-terminal-activity.ts`, `src/rex-terminal-watch.ts`            |
+| Reading terminal text in parts         | `src/terminal-service.ts` (`read`, `readTail`); contract in `docs/research/rex-blob-read.md`                                         |
 | Byte streams, file transfers, forwards | `src/rex-bytes-stream.ts`, `src/rex-file-transfer.ts`, `src/rex-tunnel-forward.ts`; contract in `docs/research/rex-data-bytes-v1.md` |
 | Layout trees                           | `src/rex-layout.ts`                                                                                                                  |
 | Errors                                 | `src/rex-errors.ts`                                                                                                                  |

@@ -7,6 +7,8 @@ import { RexClientRequestFailure } from "./client-service.ts";
 import { RexSdk } from "./rex-sdk.ts";
 import type { RexMethodInput } from "./rex-operation.ts";
 import type { RexTerminalStreamItem } from "./rex-terminal-stream.ts";
+import type { RexEventStreamOptions } from "./event-service.ts";
+import { rexEventSessionId, type RexEvent } from "./rex-events.ts";
 import { runRexSdkTest } from "./testing/rex-test-runtime.ts";
 import { rexTestServerError, type IRexTestServer } from "./testing/rex-test-server.ts";
 
@@ -45,6 +47,9 @@ const sessionEvent = (id: string, type: string, payload: object) => ({
   type: "session_event",
   payload: { session_id: id, event: { type, payload } },
 });
+
+const nameOf = (event: RexEvent) =>
+  event._tag === "TerminalEvent" || event._tag === "BlockEvent" ? event.name : event.type;
 
 const terminalEvent = (name: string, payload: object) =>
   sessionEvent(sessionId, "block_event", {
@@ -345,6 +350,99 @@ describe("events", () => {
               dropped.payload.blockId,
             ],
         ).toEqual(["block_event", Option.some(sessionId), Option.none()]);
+      }),
+    ));
+
+  test("subscribers on one connection receive only the sessions and server events they selected", () =>
+    runRexSdkTest((server) =>
+      Effect.gen(function* () {
+        handleAttach(server);
+        server.handle("session.attach_all", () => Effect.succeed({ sessions: [] }));
+        const rex = yield* RexSdk;
+        const describeEvent = (event: RexEvent) =>
+          `${Option.getOrElse(rexEventSessionId(event), () => "server")} ${nameOf(event)}`;
+        const collect = (count: number, options?: RexEventStreamOptions) =>
+          Effect.forkChild(
+            Stream.runCollect(Stream.take(rex.events.stream(options), count)).pipe(
+              Effect.map((events) => events.map(describeEvent)),
+            ),
+          );
+        const streamA = yield* collect(2, { sessionIds: [sessionId] });
+        const waitForA = yield* Effect.forkChild(
+          rex.events.waitFor((event): event is RexEvent => nameOf(event) === "window_closed", {
+            sessionIds: [sessionId],
+          }),
+        );
+        const streamB = yield* collect(2, { sessionIds: [otherSessionId] });
+        const sessionScope = yield* collect(4, { server: "session" });
+        const everything = yield* collect(5);
+        // Every subscription exists once its attach reached the server, since streams subscribe first.
+        yield* Effect.sleep("100 millis");
+        expect(server.requestsFor("session.attach").map((request) => request.payload)).toEqual([
+          { session_id: sessionId },
+          { session_id: otherSessionId },
+        ]);
+        expect(server.requestsFor("session.attach_all").length).toBe(2);
+
+        server.emit(sessionEvent(otherSessionId, "window_closed", { window_id: windowId }));
+        server.emit(sessionEvent(sessionId, "window_closed", { window_id: windowId }));
+        server.emit(terminalEvent("child_exited", { exit_code: 0 }));
+        server.emit({
+          type: "session_created",
+          payload: { session: { session_id: otherSessionId, label: "b" } },
+        });
+        server.emit(sessionEvent(otherSessionId, "session_label_changed", { label: "b" }));
+
+        const a = `${sessionId}`;
+        const b = `${otherSessionId}`;
+        const waited = yield* Fiber.join(waitForA);
+        expect(describeEvent(waited)).toBe(`${a} window_closed`);
+        expect(yield* Fiber.join(streamA)).toEqual([`${a} window_closed`, `${a} child_exited`]);
+        expect(yield* Fiber.join(streamB)).toEqual([
+          `${b} window_closed`,
+          `${b} session_label_changed`,
+        ]);
+        expect(yield* Fiber.join(sessionScope)).toEqual([
+          `${b} window_closed`,
+          `${a} window_closed`,
+          "server session_created",
+          `${b} session_label_changed`,
+        ]);
+        expect(yield* Fiber.join(everything)).toEqual([
+          `${b} window_closed`,
+          `${a} window_closed`,
+          `${a} child_exited`,
+          "server session_created",
+          `${b} session_label_changed`,
+        ]);
+      }),
+    ));
+
+  test("a session-only subscriber does not see server-wide events, dropped ones included", () =>
+    runRexSdkTest((server) =>
+      Effect.gen(function* () {
+        handleAttach(server);
+        const rex = yield* RexSdk;
+        const fiber = yield* Effect.forkChild(
+          Stream.runCollect(Stream.take(rex.events.stream({ sessionIds: [sessionId] }), 2)),
+        );
+        yield* Effect.sleep("100 millis");
+        server.emit({ type: "hosts_changed", payload: { hash: "h" } });
+        server.emit({ type: "event_dropped", payload: { event_type: "hosts_changed", size: 9 } });
+        server.emit({
+          type: "event_dropped",
+          payload: { event_type: "block_event", session_id: otherSessionId, size: 9 },
+        });
+        server.emit({
+          type: "event_dropped",
+          payload: { event_type: "block_event", session_id: sessionId, size: 9 },
+        });
+        server.emit({ type: "session_destroyed", payload: { session_id: sessionId } });
+        const events = yield* Fiber.join(fiber);
+        expect(events.map((event) => event._tag === "ServerEvent" && event.type)).toEqual([
+          "event_dropped",
+          "session_destroyed",
+        ]);
       }),
     ));
 

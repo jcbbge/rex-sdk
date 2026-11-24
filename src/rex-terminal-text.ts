@@ -21,7 +21,11 @@
 export interface RexTerminalText {
   /** The lines, oldest first, with trailing spaces and trailing blank lines removed. */
   readonly lines: ReadonlyArray<string>;
-  /** Where each line starts, in UTF-8 bytes from the start of the whole output. */
+  /**
+   * Where each line starts, in UTF-8 bytes from the start of the whole output as `format`
+   * returned it: the same units as `blob_read`'s `offset` and `total`. The bytes at
+   * `lineOffsets[i]` begin with `lines[i]`; trailing spaces the line leaves out still count.
+   */
   readonly lineOffsets: ReadonlyArray<number>;
   /** True when older lines exist that this text leaves out. */
   readonly truncated: boolean;
@@ -29,6 +33,9 @@ export interface RexTerminalText {
 
 /**
  * Splits `content`, which starts `start` bytes into the whole output, into lines.
+ *
+ * `content` must start at a line start and on a character, so each offset is `start` plus the
+ * UTF-8 length of the text before it.
  *
  * @category constructors
  * @since 0.1.0
@@ -38,13 +45,18 @@ export function makeRexTerminalText(
   start = 0,
   truncated = false,
 ): RexTerminalText {
-  const lines = content.split("\n").map((line) => line.replace(/[ \t\r]+$/, ""));
-  while (lines.length > 0 && lines.at(-1) === "") lines.pop();
+  const lines: string[] = [];
   const lineOffsets: number[] = [];
   let offset = start;
-  for (const line of lines) {
+  // Offsets count the raw line, including the trailing spaces it leaves out, so they stay exact.
+  for (const raw of content.split("\n")) {
+    lines.push(raw.replace(/[ \t\r]+$/, ""));
     lineOffsets.push(offset);
-    offset += Buffer.byteLength(line) + 1;
+    offset += Buffer.byteLength(raw) + 1;
+  }
+  while (lines.length > 0 && lines.at(-1) === "") {
+    lines.pop();
+    lineOffsets.pop();
   }
   return { lines, lineOffsets, truncated };
 }

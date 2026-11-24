@@ -198,6 +198,38 @@ describe("downloads", () => {
       }),
     ));
 
+  test("stop when the server sends the end marker but never closes, within the stall timeout", () =>
+    runRexSdkTest((server) =>
+      Effect.gen(function* () {
+        handleAttach(server);
+        const rex = yield* RexSdk;
+        serveDownload(server, (connection) => {
+          connection.send(bytes("hello"));
+          connection.send(empty);
+        });
+        // The outer deadline keeps a regression from hanging the suite.
+        const unclosed = yield* Effect.exit(
+          rex.terminals.readFile(target, file.path, { stallTimeout: "100 millis" }),
+        ).pipe(Effect.timeoutOption("2 seconds"));
+        expect(Option.map(unclosed, failureTags)).toEqual(Option.some(["RexTransferStalled"]));
+        yield* Effect.sleep("50 millis");
+        expect(lastStream(server)?.closed?.code).toBe(4001);
+
+        // A close that follows the end marker within the stall timeout still succeeds.
+        serveDownload(server, (connection) => {
+          connection.send(bytes("hello"));
+          connection.send(empty);
+          setTimeout(() => connection.close(1000), 50);
+        });
+        const contents = yield* rex.terminals
+          .readFile(target, file.path, { stallTimeout: "300 millis" })
+          .pipe(Effect.timeout("2 seconds"));
+        expect(text(contents.bytes)).toBe("hello");
+        yield* Effect.sleep("50 millis");
+        expect(lastStream(server)?.closed?.code).toBe(1000);
+      }),
+    ));
+
   test("cancel with close 4001 when the scope closes before the download finishes", () =>
     runRexSdkTest((server) =>
       Effect.gen(function* () {
@@ -389,6 +421,39 @@ describe("tunnels", () => {
           data_ref_id: expect.stringMatching(/^conn:/),
           subprotocol: "rex.data.bytes.v1",
         });
+      }),
+    ));
+
+  test("openStream stays open after the server's half-close until this side finishes", () =>
+    runRexSdkTest((server) =>
+      Effect.gen(function* () {
+        handleAttach(server);
+        const received: Array<string> = [];
+        server.serveBytes(blockId, () => (connection) => {
+          connection.send(bytes("bye"));
+          connection.send(empty);
+          connection.onMessage((chunk) => {
+            if (chunk.length === 0) connection.close(1000);
+            else received.push(text(chunk));
+          });
+        });
+        const rex = yield* RexSdk;
+        const reply = yield* Effect.scoped(
+          Effect.gen(function* () {
+            const stream = yield* rex.tunnels.openStream(target);
+            const chunks = yield* Stream.runCollect(stream.incoming);
+            // An idle half-open TCP connection is not a stall.
+            yield* Effect.sleep("300 millis");
+            yield* stream.write(bytes("late"));
+            yield* stream.end;
+            yield* stream.done;
+            return chunks.map(text).join("");
+          }),
+        );
+        expect(reply).toBe("bye");
+        expect(received).toEqual(["late"]);
+        yield* Effect.sleep("50 millis");
+        expect(lastStream(server)?.closed?.code).toBe(1000);
       }),
     ));
 
