@@ -1,6 +1,6 @@
 # Rex SDK fork
 
-This checkout provides the local-path Rex SDK for Rivet. The fork lives on `origin/main`.
+This fork provides the packaged Rex SDK for Rivet and its Rex task views. It lives on `origin/main`.
 The `upstream` remote tracks Dillon's SDK.
 
 ## Fork changes
@@ -14,7 +14,7 @@ The `upstream` remote tracks Dillon's SDK.
 | `pi/fork-policy.ts`, `pi/index.ts`                                                                                                                                               | Filter the Pi registration and search catalog in one place. The policy matches known methods, focus and navigation names, and explicit focus parameters. |
 | `pi/rex-tool-operations.ts`, `pi/rex-tool-search.ts`, `pi/test/rex-codemode.test.ts`, `pi/README.md`                                                                             | Record the focus history exclusion, keep examples and search help aligned, and verify that denied tools stay out of Pi.                                  |
 | `pnpm-workspace.yaml`                                                                                                                                                            | Record pnpm's build decisions for the three transitive development packages whose install scripts are unused by the SDK build.                           |
-| `README.md`, `AGENTS.md`, `docs/architecture.md`, `FORK.md`                                                                                                                      | Document the protocol, the local-path build, and how to fold upstream changes into the fork.                                                             |
+| `README.md`, `AGENTS.md`, `docs/architecture.md`, `FORK.md`                                                                                                                      | Document the protocol, packaged deployment, and how to fold upstream changes into the fork.                                                              |
 
 ## Fold in upstream changes
 
@@ -50,4 +50,18 @@ pnpm run build
 ```
 
 Publish the verified branch with `git push origin HEAD:main` when the push is a fast-forward.
-Update and rebuild `~/rex-sdk` for local-path consumers.
+
+## Release to Rivet
+
+1. In an isolated SDK worktree at the verified, published commit, run
+   `pnpm install --frozen-lockfile` and `pnpm run build`. Tag the commit
+   `rivet-<full commit SHA>`.
+2. Run `npm pack --ignore-scripts --pack-destination "$HOME/rex-sdk/releases/<full commit SHA>"`
+   after creating that directory. Keep each archived build in its own directory.
+3. Pin that archive in Rivet's app manifest and lockfile, including the
+   tarball's integrity. Verify `npm ci` and the bridge against it in a Rivet
+   worktree. Rex task-view resolves the SDK from the same installed dependency.
+4. With the affected work paused, install the locked dependencies and restart
+   Rivet and the task-view controllers. Verify the bridge and controllers
+   reconnected. Rebuilding the SDK checkout alone does not change their
+   installed package.
