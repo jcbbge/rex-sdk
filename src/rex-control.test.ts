@@ -285,7 +285,9 @@ describe("RexControl", () => {
           yield* control.connection;
           for (let index = 0; index < 4200; index += 1)
             server.emit({ type: "hosts_changed", payload: { hash: `${index}` } });
-          yield* Effect.sleep("200 millis");
+          // The response travels after the emitted events on the same connection.
+          server.handle("server.version", () => Effect.succeed(versionResult("after events")));
+          yield* control.request("server.version", {});
           const drained = yield* Effect.exit(
             Queue.takeAll(events).pipe(Effect.andThen(Queue.take(events))),
           );
