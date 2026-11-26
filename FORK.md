@@ -1,6 +1,6 @@
 # Rex SDK fork
 
-This fork provides the packaged Rex SDK for Rivet and its Rex task views. It lives on `origin/main`.
+This fork provides the packaged Rex SDK for Rivet's message bridge, its direct coding node and Rex task views. It lives on `origin/main`.
 The `upstream` remote tracks Dillon's SDK.
 
 ## Fork changes
@@ -14,7 +14,11 @@ The `upstream` remote tracks Dillon's SDK.
 | `pi/fork-policy.ts`, `pi/index.ts`                                                                                                                                               | Filter the Pi registration and search catalog in one place. The policy matches known methods, focus and navigation names, and explicit focus parameters. |
 | `pi/rex-tool-operations.ts`, `pi/rex-tool-search.ts`, `pi/test/rex-codemode.test.ts`, `pi/README.md`                                                                             | Record the focus history exclusion, keep examples and search help aligned, and verify that denied tools stay out of Pi.                                  |
 | `pnpm-workspace.yaml`                                                                                                                                                            | Record pnpm's build decisions for the three transitive development packages whose install scripts are unused by the SDK build.                           |
-| `README.md`, `AGENTS.md`, `docs/architecture.md`, `FORK.md`                                                                                                                      | Document the protocol, packaged deployment, and how to fold upstream changes into the fork.                                                              |
+| `README.md`, `docs/architecture.md`, `FORK.md`                                                                                                                                   | Document the protocol, packaged deployment, and how to fold upstream changes into the fork.                                                              |
+
+## Integration map
+
+Rivet's bridge (`~/rivet/app/src/bridge/rex.ts`) owns message delivery, holds and receipts on hive Rex. The separate coding node uses `~/rivet/app/src/coder-rex.ts` to create an interactive pane and submit an explicit coding request through the SDK; it does not duplicate the bridge's message queue. The Rex app on the M5 also has its own independent server; neither SDK client connects to that local server. SDK interfaces live in `src/rex-control.ts`, `src/rex-attachments.ts`, `src/rex-events.ts` and the namespace services under `src/`.
 
 ## Fold in upstream changes
 

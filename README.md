@@ -163,4 +163,4 @@ vp run ready        # generated-code drift, vp check, vp test, vp pack
 vp run test:live    # optional: against your Rex server, in a session it creates and destroys
 ```
 
-See [AGENTS.md](AGENTS.md) and [docs/architecture.md](docs/architecture.md).
+See [FORK.md](FORK.md) for the integration map and [docs/architecture.md](docs/architecture.md) for SDK internals.
